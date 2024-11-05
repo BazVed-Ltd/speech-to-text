@@ -8,7 +8,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 
 import torch
-from transformers import pipeline
+from transformers import pipeline, WhisperForConditionalGeneration, WhisperProcessor
 import soundfile as sf
 
 # Чтение переменных окружения
@@ -29,12 +29,24 @@ dp = Dispatcher()
 
 # Настройка модели распознавания речи
 logger.info("Настройка модели распознавания речи...")
+torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+processor = WhisperProcessor.from_pretrained(SPEECH_RECOGNITION_MODEL)
+model = WhisperForConditionalGeneration.from_pretrained(SPEECH_RECOGNITION_MODEL)
+
+# Установка языка и задачи для принудительного декодирования (только русский)
+language = "ru"
+task = "transcribe"
+forced_decoder_ids = processor.get_decoder_prompt_ids(language=language, task=task)
+model.generation_config.forced_decoder_ids = forced_decoder_ids
+
 pipe = pipeline(
     "automatic-speech-recognition",
-    model=SPEECH_RECOGNITION_MODEL,
+    model=model,
+    tokenizer=processor.tokenizer,
+    feature_extractor=processor.feature_extractor,
     chunk_length_s=30,
     device=PYTORCH_DEVICE,
-    #language='ru'
+    torch_dtype=torch_dtype
 )
 
 # Установка pad_token_id
@@ -70,10 +82,6 @@ async def media_handler(message: types.Message):
             await message.reply('Неподдерживаемый тип медиа.')
             return
 
-        if int(file_size) >= 715000:
-            await message.reply('Размер загружаемого файла слишком велик.')
-            return
-
         file = await bot.get_file(file_id)
         file_path = file.file_path
         audio_stream = await bot.download_file(file_path)
@@ -98,14 +106,14 @@ async def voice_recognizer(audio_stream):
         # Загрузка аудио данных из объекта BytesIO
         converted_audio.seek(0)
         data, samplerate = sf.read(converted_audio)
-        
+
         # Получение входных признаков
         input_features = pipe.feature_extractor(
-            data, 
-            sampling_rate=samplerate, 
+            data,
+            sampling_rate=samplerate,
             return_tensors="pt"
         ).input_features.to(pipe.device)
-        
+
         # Генерация транскрипции
         predicted_ids = pipe.model.generate(input_features)
         transcription = pipe.tokenizer.batch_decode(predicted_ids, skip_special_tokens=True)[0]
