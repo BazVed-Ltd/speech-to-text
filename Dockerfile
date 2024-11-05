@@ -1,29 +1,13 @@
-FROM python:3.10-slim
-
-RUN apt-get update && apt-get install -y \
-	dos2unix \
-	iputils-ping \
-	nano \
-	tzdata\
-	procps\
-	ffmpeg\
-	flac
-
-# create the app user
-RUN addgroup --system app && adduser --system --group app
-
-# set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+FROM rocm/dev-ubuntu-24.04:6.2
+RUN apt-get update && apt-get install -y python3-pip python3-dev
+RUN pip3 install --break-system-packages --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+RUN apt-get update && apt-get install -y ffmpeg
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
 
-COPY . .
+ADD . .
 
-# test/debug mode
-# ENTRYPOINT ["tail", "-f", "/dev/null"]
-
-CMD [ "python", "main.py" ]
+CMD [ "python3", "main.py" ]

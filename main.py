@@ -1,105 +1,150 @@
-import telebot
-import traceback
-import speech_recognition as sr
-import subprocess
 import os
+import io
 import logging
-from telebot import types
+import asyncio
+import traceback
 
-BOT_TOKEN = None
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
 
-def read_bot_token():
-    try:
-        from config import BOT_TOKEN
-    except:
-        pass
+import torch
+from transformers import pipeline
+import soundfile as sf
 
-    if len(BOT_TOKEN) == 0:
-        BOT_TOKEN = os.environ.get('BOT_TOKEN')
+# Чтение переменных окружения
+BOT_TOKEN = os.getenv('BOT_TOKEN')
+ALLOWED_CHAT_ID = int(os.getenv('ALLOWED_CHAT_ID'))
+PYTORCH_DEVICE = os.getenv('PYTORCH_DEVICE')
+SPEECH_RECOGNITION_MODEL = os.getenv('SPEECH_RECOGNITION_MODEL')
 
-    if BOT_TOKEN is None:
-        raise ('Token for the bot must be provided (BOT_TOKEN variable)')
-    return BOT_TOKEN
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-BOT_TOKEN = read_bot_token()
+# Инициализация бота
+bot = Bot(token=BOT_TOKEN)
 
-r = sr.Recognizer()
-bot = telebot.TeleBot(BOT_TOKEN)
+# Инициализация диспетчера
+dp = Dispatcher()
 
-LOG_FOLDER = '.logs'
-if not os.path.exists(LOG_FOLDER):
-    os.makedirs(LOG_FOLDER)
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename = f'{LOG_FOLDER}/app.log'
+# Настройка модели распознавания речи
+logger.info("Настройка модели распознавания речи...")
+pipe = pipeline(
+    "automatic-speech-recognition",
+    model=SPEECH_RECOGNITION_MODEL,
+    chunk_length_s=30,
+    device=PYTORCH_DEVICE,
+    #language='ru'
 )
 
-logger = logging.getLogger('telegram-bot')
-logging.getLogger('urllib3.connectionpool').setLevel('INFO')
+# Установка pad_token_id
+if pipe.tokenizer.pad_token_id is None or pipe.tokenizer.pad_token_id == pipe.tokenizer.eos_token_id:
+    pipe.tokenizer.pad_token_id = pipe.tokenizer.eos_token_id + 1
+logger.info("Модель распознавания речи успешно настроена.")
 
-@bot.message_handler(commands=['start'])
-def start_message(message):
-    bot.send_message(message.chat.id, 'Welcome! This bot can recognize your *voice* in a voice message and translate '
-                                      'it into *text*.' + '\n' + 'Two languages supported - Russian and English' +
-                     '\n' + 'Send a voice message to start the conversion.', parse_mode='Markdown')
+@dp.message(Command("start"))
+async def start_message(message: types.Message):
+    if message.chat.id != ALLOWED_CHAT_ID:
+        await message.reply("Этот бот недоступен в этом чате.")
+        return
+    await message.reply(
+        'Добро пожаловать! Этот бот может распознать ваш *голос* в голосовом сообщении или видеозаметке и преобразовать '
+        'его в *текст*.\nОтправьте голосовое сообщение или видеозаметку, чтобы начать конвертацию.',
+        parse_mode='Markdown'
+    )
 
+@dp.message(lambda message: message.voice or message.video_note)
+async def media_handler(message: types.Message):
+    if message.chat.id != ALLOWED_CHAT_ID:
+        await message.reply("Этот бот недоступен в этом чате.")
+        return
 
-@bot.message_handler(content_types=['voice'])
-def voice_handler(message):
-    file_id = message.voice.file_id  # file size check. If the file is too big, FFmpeg may not be able to handle it.
-    file = bot.get_file(file_id)
+    try:
+        if message.voice:
+            file_id = message.voice.file_id
+            file_size = message.voice.file_size
+        elif message.video_note:
+            file_id = message.video_note.file_id
+            file_size = message.video_note.file_size
+        else:
+            await message.reply('Неподдерживаемый тип медиа.')
+            return
 
-    file_size = file.file_size
-    if int(file_size) >= 715000:
-        bot.send_message(message.chat.id, 'Upload file size is too large.')
-    else:
-        download_file = bot.download_file(file.file_path)  # download file for processing
-        with open('audio.ogg', 'wb') as file:
-            file.write(download_file)
+        if int(file_size) >= 715000:
+            await message.reply('Размер загружаемого файла слишком велик.')
+            return
 
-        language_buttons(message)  # buttons for selecting the language of the voice message
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+        audio_stream = await bot.download_file(file_path)
 
-@bot.callback_query_handler(func=lambda call: True)
-def buttons(call):
-    if call.data == 'russian':
-        text = voice_recognizer('ru_RU')  # call the function with selected language
-        bot.send_message(call.from_user.id, text)  # send the heard text to the user
-        _clear()
-    elif call.data == 'english':
-        text = voice_recognizer('en_EN')
-        bot.send_message(call.from_user.id, text)
-        _clear()
+        text = await voice_recognizer(audio_stream)
+        await message.reply(text)
+    except Exception as e:
+        logger.error(f"Ошибка в media_handler:\n{traceback.format_exc()}")
+        await message.reply('Произошла ошибка при обработке вашего сообщения.')
 
-def voice_recognizer(language):
-    subprocess.run(['ffmpeg', '-i', 'audio.ogg', 'audio.wav', '-y'])  # formatting ogg file in to wav format
-    text = 'Words not recognized.'
-    file = sr.AudioFile('audio.wav')
-    with file as source:
-        try:
-            audio = r.record(source)  # listen to file
-            text = r.recognize_google(audio, language=language)  # and write the heard text to a text variable
-        except:
-            logger.error(f"Exception:\n {traceback.format_exc()}")
+@dp.message(Command("get_chat_id"))
+async def get_chat_id(message: types.Message):
+    chat_id = message.chat.id
+    await message.reply(f"ID этого чата: {chat_id}")
 
-    return text
+async def voice_recognizer(audio_stream):
+    converted_audio = await convert_audio(audio_stream)
+    if not converted_audio:
+        return "Не удалось преобразовать аудио."
 
-def language_buttons(message):
-    keyboard = types.InlineKeyboardMarkup()
-    button_ru = types.InlineKeyboardButton(text='Russian', callback_data='russian')
-    button_eng = types.InlineKeyboardButton(text='English', callback_data='english')
-    keyboard.add(button_ru, button_eng)
-    bot.send_message(message.chat.id, 'Please select a voice message language.', reply_markup=keyboard)
+    try:
+        # Загрузка аудио данных из объекта BytesIO
+        converted_audio.seek(0)
+        data, samplerate = sf.read(converted_audio)
+        
+        # Получение входных признаков
+        input_features = pipe.feature_extractor(
+            data, 
+            sampling_rate=samplerate, 
+            return_tensors="pt"
+        ).input_features.to(pipe.device)
+        
+        # Генерация транскрипции
+        predicted_ids = pipe.model.generate(input_features)
+        transcription = pipe.tokenizer.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+        return transcription.strip()
+    except Exception:
+        logger.error(f"Ошибка при транскрипции:\n{traceback.format_exc()}")
+        return "Не удалось транскрибировать аудио."
 
-def _clear():
-    """Remove unnecessary files"""
-    _files = ['audio.wav', 'audio.ogg']
-    for _file in _files:
-        if os.path.exists(_file):
-            os.remove
+async def convert_audio(audio_data):
+    ffmpeg_cmd = [
+        'ffmpeg',
+        '-i', 'pipe:0',      # Вход из stdin
+        '-f', 'wav',         # Формат вывода
+        '-ar', '16000',      # Изменение частоты дискретизации на 16000 Гц
+        'pipe:1',            # Вывод в stdout
+        '-y',                # Перезапись выходных файлов
+        '-loglevel', 'error' # Подавление ненужного вывода
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *ffmpeg_cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        out, err = await process.communicate(input=audio_data.getvalue())
+        if process.returncode != 0:
+            logger.error(f"Ошибка FFmpeg: {err.decode()}")
+            return None
+        else:
+            return io.BytesIO(out)
+    except Exception as e:
+        logger.error(f"Ошибка в convert_audio:\n{traceback.format_exc()}")
+        return None
+
+async def main():
+    logger.info('Запуск бота...')
+    await dp.start_polling(bot)
+    logger.info('Бот остановлен.')
 
 if __name__ == '__main__':
-    logger.info('start bot')
-    bot.polling(True)
-    logger.info('stop bot')
+    asyncio.run(main())

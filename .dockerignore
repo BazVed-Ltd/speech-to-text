@@ -21,3 +21,5 @@ pics/*
 
 # files
 TODOs.txt
+
+whisper_model_cache/**
