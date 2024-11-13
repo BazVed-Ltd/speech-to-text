@@ -44,7 +44,7 @@ pipe = pipeline(
     model=model,
     tokenizer=processor.tokenizer,
     feature_extractor=processor.feature_extractor,
-    chunk_length_s=30,
+    chunk_length_s=30,  # Позволяет обрабатывать аудио длиннее 30 секунд
     device=PYTORCH_DEVICE,
     torch_dtype=torch_dtype
 )
@@ -60,12 +60,12 @@ async def start_message(message: types.Message):
         await message.reply("Этот бот недоступен в этом чате.")
         return
     await message.reply(
-        'Добро пожаловать! Этот бот может распознать ваш *голос* в голосовом сообщении или видеозаметке и преобразовать '
-        'его в *текст*.\nОтправьте голосовое сообщение или видеозаметку, чтобы начать конвертацию.',
+        'Добро пожаловать! Этот бот может распознать ваш *голос* в голосовом сообщении и преобразовать '
+        'его в *текст*.\nОтправьте голосовое сообщение, чтобы начать конвертацию.',
         parse_mode='Markdown'
     )
 
-@dp.message(lambda message: message.voice or message.video_note)
+@dp.message(lambda message: message.voice)
 async def media_handler(message: types.Message):
     if message.chat.id != ALLOWED_CHAT_ID:
         await message.reply("Этот бот недоступен в этом чате.")
@@ -75,9 +75,6 @@ async def media_handler(message: types.Message):
         if message.voice:
             file_id = message.voice.file_id
             file_size = message.voice.file_size
-        elif message.video_note:
-            file_id = message.video_note.file_id
-            file_size = message.video_note.file_size
         else:
             await message.reply('Неподдерживаемый тип медиа.')
             return
@@ -107,16 +104,8 @@ async def voice_recognizer(audio_stream):
         converted_audio.seek(0)
         data, samplerate = sf.read(converted_audio)
 
-        # Получение входных признаков
-        input_features = pipe.feature_extractor(
-            data,
-            sampling_rate=samplerate,
-            return_tensors="pt"
-        ).input_features.to(pipe.device)
-
-        # Генерация транскрипции
-        predicted_ids = pipe.model.generate(input_features)
-        transcription = pipe.tokenizer.batch_decode(predicted_ids, skip_special_tokens=True)[0]
+        # Передача аудиоданных напрямую в pipe без преобразования в тензор
+        transcription = pipe(data, chunk_length_s=30)["text"]
         return transcription.strip()
     except Exception:
         logger.error(f"Ошибка при транскрипции:\n{traceback.format_exc()}")
@@ -125,12 +114,14 @@ async def voice_recognizer(audio_stream):
 async def convert_audio(audio_data):
     ffmpeg_cmd = [
         'ffmpeg',
-        '-i', 'pipe:0',      # Вход из stdin
-        '-f', 'wav',         # Формат вывода
-        '-ar', '16000',      # Изменение частоты дискретизации на 16000 Гц
-        'pipe:1',            # Вывод в stdout
-        '-y',                # Перезапись выходных файлов
-        '-loglevel', 'error' # Подавление ненужного вывода
+        '-i', 'pipe:0',               # Вход из stdin
+        '-vn',                        # Игнорировать видео (если это видеофайл)
+        '-f', 'wav',                  # Формат вывода
+        '-ar', '16000',               # Изменение частоты дискретизации на 16000 Гц
+        '-ac', '1',                   # Убедиться, что канал только один (моно)
+        'pipe:1',                     # Вывод в stdout
+        '-y',                         # Перезапись выходных файлов
+        '-loglevel', 'error'          # Подавление ненужного вывода
     ]
     try:
         process = await asyncio.create_subprocess_exec(
