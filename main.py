@@ -13,7 +13,7 @@ import soundfile as sf
 
 # Чтение переменных окружения
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-ALLOWED_CHAT_ID = int(os.getenv('ALLOWED_CHAT_ID'))
+ALLOWED_CHAT_ID = [int(x) for x in os.getenv('ALLOWED_CHAT_ID').split(',')]
 PYTORCH_DEVICE = os.getenv('PYTORCH_DEVICE')
 SPEECH_RECOGNITION_MODEL = os.getenv('SPEECH_RECOGNITION_MODEL')
 
@@ -56,8 +56,8 @@ logger.info("Модель распознавания речи успешно н�
 
 @dp.message(Command("start"))
 async def start_message(message: types.Message):
-    if message.chat.id != ALLOWED_CHAT_ID:
-        await message.reply("Этот бот недоступен в этом чате.")
+    if message.chat.id not in ALLOWED_CHAT_ID:
+        await message.reply(f"Этот бот недоступен в этом чате. ID чата {message.chat.id}")
         return
     await message.reply(
         'Добро пожаловать! Этот бот может распознать ваш *голос* в голосовом сообщении и преобразовать '
@@ -67,8 +67,8 @@ async def start_message(message: types.Message):
 
 @dp.message(lambda message: message.voice)
 async def media_handler(message: types.Message):
-    if message.chat.id != ALLOWED_CHAT_ID:
-        await message.reply("Этот бот недоступен в этом чате.")
+    if message.chat.id not in ALLOWED_CHAT_ID:
+        await message.reply(f"Этот бот недоступен в этом чате. ID чата {message.chat.id}")
         return
 
     try:
