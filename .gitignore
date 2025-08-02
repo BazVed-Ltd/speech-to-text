@@ -7,3 +7,6 @@ __pycache__/
 
 # files
 .env
+
+whisper_model_cache
+.vscode

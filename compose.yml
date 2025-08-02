@@ -15,5 +15,9 @@ services:
     volumes:
       - ./.logs:/app/.logs
       - ./whisper_model_cache:/root/.cache
+      - type: tmpfs
+        target: /app/tmp
+        tmpfs:
+          size: 1g
     restart: unless-stopped
     env_file: .env
