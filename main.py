@@ -30,7 +30,7 @@ dp = Dispatcher()
 
 # Настройка модели распознавания речи
 logger.info("Настройка модели распознавания речи...")
-torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+torch_dtype = torch.float16 if torch.cuda.is_available() and PYTORCH_DEVICE != 'cpu' else torch.float32
 processor = WhisperProcessor.from_pretrained(SPEECH_RECOGNITION_MODEL)
 model = WhisperForConditionalGeneration.from_pretrained(SPEECH_RECOGNITION_MODEL)
 
@@ -139,8 +139,6 @@ async def convert_audio(audio_path: str) -> io.BytesIO | None:
 
         # Асинхронная запись и чтение
         stdout, stderr = await process.communicate()
-
-        logger.info(stderr)
         
         if process.returncode != 0:
             logger.error(f"FFmpeg error: {stderr.decode()}")
