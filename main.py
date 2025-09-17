@@ -5,7 +5,7 @@ import asyncio
 import time
 import traceback
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, enums
 from aiogram.filters import Command
 
 import torch
@@ -88,7 +88,7 @@ async def media_handler(message: types.Message) -> None:
             
         # Передаем тип файла в конвертер
         text = await voice_recognizer(tmp_path)
-        await message.reply(f"<blockquote expandable>{text}</blockquote", parse_mode="HTML")
+        await message.reply(f"<blockquote expandable>{text}</blockquote", parse_mode=enums.parse_mode.ParseMode.HTML)
         os.remove(tmp_path)
     except Exception as e:
         logger.error(f"Ошибка в media_handler:\n{e}\n{traceback.format_exc()}")
