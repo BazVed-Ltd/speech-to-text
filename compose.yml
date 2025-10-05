@@ -1,16 +1,6 @@
 services:
   app:
     build: .
-    devices:
-      - "/dev/kfd:/dev/kfd"
-      - "/dev/dri:/dev/dri"
-    group_add:
-      - video
-    ipc: host
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp:unconfined
     shm_size: '8g'
     volumes:
       - ./.logs:/app/.logs
